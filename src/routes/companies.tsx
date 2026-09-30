@@ -1,8 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { Building2, Copy, Pencil, Plus, Search, X } from "lucide-react";
+import { Building2, Copy, ExternalLink, Pencil, Plus, Search, X } from "lucide-react";
 import { toast } from "sonner";
 import { Shell } from "@/components/dash/Shell";
+import { CompanyMark } from "@/components/dash/CompanyMark";
+import { companyWebsiteHref as websiteHref } from "@/lib/company-website";
 import { Kpi, Panel, Pill } from "@/components/dash/bits";
 import {
   createCompany,
@@ -48,6 +50,7 @@ const EMPTY_DRAFT = {
   company_name: "",
   industry: "",
   company_description: "",
+  website: "",
   work_location: "",
   tier: "core",
   salary_min: "",
@@ -84,6 +87,7 @@ function draftFrom(company: PlacementCompany): CompanyDraft {
     company_name: company.company_name,
     industry: company.industry,
     company_description: company.company_description,
+    website: company.website,
     work_location: company.work_location,
     tier: company.tier,
     salary_min: company.salary_min == null ? "" : String(company.salary_min),
@@ -101,6 +105,9 @@ function payloadFrom(draft: CompanyDraft): CompanyUpdatePayload {
     company_name: draft.company_name.trim(),
     industry: draft.industry.trim(),
     company_description: draft.company_description.trim(),
+    // Sent raw, not scheme-prefixed: the backend reduces whatever is typed to an
+    // origin and resolves the favicon from it, so there is nothing to normalise here.
+    website: draft.website.trim(),
     work_location: draft.work_location.trim(),
     tier: draft.tier as DriveCompanyTier,
     salary_min: numberOrNull(draft.salary_min),
@@ -154,6 +161,23 @@ function CompanyFields({
           placeholder="e.g. IT Services"
           className={`${INPUT_CLS} mt-1.5`}
         />
+      </div>
+      <div className="sm:col-span-2">
+        <label className="mono-label" htmlFor={field("website")}>
+          Website
+        </label>
+        <input
+          id={field("website")}
+          type="text"
+          inputMode="url"
+          value={draft.website}
+          onChange={(e) => set("website")(e.target.value)}
+          placeholder="e.g. tcs.com — used to fetch the company logo"
+          className={`${INPUT_CLS} mt-1.5`}
+        />
+        <p className="mt-1.5 text-[11px] text-muted-foreground">
+          Optional. The scheme is added for you if you leave it off.
+        </p>
       </div>
       <div className="sm:col-span-2">
         <label className="mono-label" htmlFor={field("company_description")}>
@@ -316,6 +340,10 @@ function CompanyPage() {
   const [editing, setEditing] = useState(false);
   const [editDraft, setEditDraft] = useState<CompanyDraft>(EMPTY_DRAFT);
   const [savingEdit, setSavingEdit] = useState(false);
+
+  // Resolved once for the open company so the link is rendered only when the
+  // stored value is actually a usable http(s) address.
+  const selectedWebsite = selected ? websiteHref(selected.website) : null;
 
   function openCompany(company: PlacementCompany) {
     setSelected(company);
@@ -493,13 +521,11 @@ function CompanyPage() {
                 <button
                   key={c.id}
                   onClick={() => openCompany(c)}
-                  className="panel p-5 text-left transition-shadow hover:shadow-md"
+                  className="panel cursor-pointer p-5 text-left transition-shadow hover:shadow-md"
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex items-center gap-3">
-                      <span className="grid size-10 place-items-center rounded-md bg-muted font-display text-xs font-bold">
-                        {c.company_name.slice(0, 2).toUpperCase()}
-                      </span>
+                      <CompanyMark company={c} />
                       <div>
                         <p className="text-sm font-semibold leading-tight">{c.company_name}</p>
                         <p className="font-mono text-[11px] text-muted-foreground">
@@ -550,7 +576,12 @@ function CompanyPage() {
                   <tbody className="divide-y divide-border">
                     {shown.map((c) => (
                       <tr key={c.id} className="hover:bg-muted/60">
-                        <td className="px-5 py-3 font-medium">{c.company_name}</td>
+                        <td className="px-5 py-3">
+                          <div className="flex items-center gap-2.5">
+                            <CompanyMark company={c} className="size-7 rounded-md" />
+                            <span className="font-medium">{c.company_name}</span>
+                          </div>
+                        </td>
                         <td className="px-5 py-3">
                           <Pill tone={c.tier === "super_dream" ? "solid" : "outline"}>
                             {TIER_LABEL[c.tier]}
@@ -664,12 +695,15 @@ function CompanyPage() {
       {selected && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-foreground/40 p-4 sm:items-center">
           <div className="panel max-h-[90vh] w-full max-w-xl overflow-y-auto">
-            <div className="flex items-start justify-between border-b border-border px-6 py-5">
-              <div>
-                <h2 className="text-lg font-bold">{selected.company_name}</h2>
-                <p className="font-mono text-xs text-muted-foreground">
-                  {selected.industry} · {selected.work_location} · {selected.company_id}
-                </p>
+            <div className="flex items-start justify-between gap-3 border-b border-border px-6 py-5">
+              <div className="flex min-w-0 items-center gap-3">
+                <CompanyMark company={selected} className="size-11 rounded-md" />
+                <div className="min-w-0">
+                  <h2 className="truncate text-lg font-bold">{selected.company_name}</h2>
+                  <p className="truncate font-mono text-xs text-muted-foreground">
+                    {selected.industry} · {selected.work_location} · {selected.company_id}
+                  </p>
+                </div>
               </div>
               <button
                 onClick={() => setSelected(null)}
@@ -705,10 +739,25 @@ function CompanyPage() {
               </form>
             ) : (
               <>
-                {selected.company_description && (
-                  <p className="border-b border-border px-6 py-4 text-sm text-muted-foreground">
-                    {selected.company_description}
-                  </p>
+                {(selectedWebsite || selected.company_description) && (
+                  <div className="border-b border-border px-6 py-4">
+                    {selectedWebsite && (
+                      <a
+                        href={selectedWebsite}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        className="inline-flex items-center gap-1.5 font-mono text-xs text-primary underline-offset-2 hover:underline"
+                      >
+                        {selected.website}
+                        <ExternalLink className="size-3 shrink-0" />
+                      </a>
+                    )}
+                    {selected.company_description && (
+                      <p className="text-sm text-muted-foreground">
+                        {selected.company_description}
+                      </p>
+                    )}
+                  </div>
                 )}
                 {selected.company_ai_info.map((block, i) => (
                   <section

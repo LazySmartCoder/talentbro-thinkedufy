@@ -37,6 +37,7 @@ import {
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { GateError, GateLoading } from "@/components/load-state";
+import { chartTooltipProps } from "@/components/dash/bits";
 
 const title = "Candidate | TalentBro";
 const description = "A candidate's placement readiness breakdown and training activity.";
@@ -208,11 +209,7 @@ function SkillRadar({ perf }: { perf: PerformanceComponents | null }) {
                 tick={{ fontSize: 9, fill: "currentColor", opacity: 0.4 }}
               />
               <Tooltip
-                contentStyle={{
-                  borderRadius: 12,
-                  border: "1px solid oklch(0.9 0 0)",
-                  background: "oklch(1 0 0)",
-                }}
+                {...chartTooltipProps}
                 formatter={(value: number | string | Array<number | string>) => [
                   `${Number(value).toFixed(1)}/100`,
                   "Skill score",

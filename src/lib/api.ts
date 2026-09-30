@@ -1,4 +1,5 @@
 import { setCollegeName } from "@/lib/branding";
+import { setUserRole } from "@/lib/user-role";
 import type { GdRollupRow, HistoryPage, PracticeRollupRow } from "@/lib/paged-history";
 
 /**
@@ -38,6 +39,11 @@ export type AuthUser = {
   email: string;
   name: string;
   avatar?: string;
+  /**
+   * What this account is called at work, e.g. "Placement Coordinator". Only
+   * institution staff record one; empty for students.
+   */
+  designation?: string;
   institution: string | null;
   institution_logo?: string;
   role: UserType;
@@ -226,6 +232,7 @@ export async function signup(body: {
   // Signup signs the new user in server-side, which rotates the CSRF secret.
   await ensureCsrfCookie();
   setCollegeName(data.user.institution);
+  setUserRole(data.user.role);
   return data.user;
 }
 
@@ -245,6 +252,7 @@ export async function login(body: {
   // refetched it — re-sync here so the first write after signing in just works.
   await ensureCsrfCookie();
   setCollegeName(data.user.institution);
+  setUserRole(data.user.role);
   return data.user;
 }
 
@@ -262,6 +270,7 @@ export async function logout(): Promise<void> {
   // logout() rotates the CSRF secret too, discarding the token cached above.
   cachedCsrfToken = null;
   setCollegeName(null);
+  setUserRole(null);
 }
 
 export async function deleteAccount(password?: string): Promise<void> {
@@ -273,6 +282,7 @@ export async function deleteAccount(password?: string): Promise<void> {
   // The session is flushed server-side, so the cached token is dead with it.
   cachedCsrfToken = null;
   setCollegeName(null);
+  setUserRole(null);
 }
 
 export async function me(): Promise<AuthUser | null> {
@@ -280,13 +290,16 @@ export async function me(): Promise<AuthUser | null> {
     const data = await apiFetch<{ user: AuthUser | null }>("/api/auth/me/");
     if (!data.user) {
       setCollegeName(null);
+      setUserRole(null);
       return null;
     }
     setCollegeName(data.user.institution);
+    setUserRole(data.user.role);
     return data.user;
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) {
       setCollegeName(null);
+      setUserRole(null);
       return null;
     }
     throw error;
@@ -2221,6 +2234,12 @@ export type PlacementCompany = {
   company_name: string;
   industry: string;
   company_description: string;
+  // Typed by the placement cell, stored as given. Read the normalised origin off
+  // the backend's company.website value when linking anywhere.
+  website: string;
+  // Favicon URL resolved server-side from `website`. Empty when no website was
+  // given or the lookup found nothing, so the UI falls back to a monogram.
+  company_logo: string;
   // Generated right after the company is registered, so this is usually empty
   // on the create response and filled in on a later read.
   company_ai_info: CompanyAiInfoBlock[];
@@ -2255,6 +2274,9 @@ export type CompanyCreatePayload = {
   company_id?: string;
   industry?: string;
   company_description?: string;
+  // Optional, and forgiving: a bare domain is fine. The backend reduces it to an
+  // origin and resolves the favicon from it, so the logo needs no field here.
+  website?: string;
   work_location?: string;
   tier?: DriveCompanyTier;
   salary_min?: number | null;
@@ -2331,8 +2353,6 @@ export type OverviewKpis = {
   active_drives: number;
   total_openings: number;
   super_dream: number;
-  verified: number;
-  unverified: number;
 };
 
 export type FunnelStage = { stage: string; value: number };
@@ -2364,12 +2384,81 @@ export async function getInstitutionOverview(): Promise<InstitutionOverview> {
   return apiFetch<InstitutionOverview>("/api/institution/overview/");
 }
 
+/**
+ * Fields the placement cell may correct on its own college record.
+ *
+ * Every key is optional and only the ones sent are written, so the dialog can
+ * save a whole form or a single correction. `email_domain` and `logo` are
+ * absent on purpose: the domain decides which sign-in addresses staff can be
+ * invited on, and moving it would orphan addresses already handed out.
+ */
+export type InstitutionUpdatePayload = {
+  name?: string;
+  institution_type?: string;
+  placement_department_name?: string;
+  placement_office_email?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  pin_code?: string;
+  // Explicitly allows undefined: clearing the field in the form has to be able
+  // to send "no value", which exactOptionalPropertyTypes otherwise forbids.
+  approximate_student_strength?: number | undefined;
+  courses_offered?: string[];
+  departments?: string[];
+};
+
+/**
+ * Save the college record. Master access only; a Beta account gets a 403 and
+ * the message the server sends, which is what the dialog shows.
+ */
+export async function updateInstitution(
+  payload: InstitutionUpdatePayload,
+): Promise<DashboardInstitution> {
+  const data = await apiFetch<{ institution: DashboardInstitution }>("/api/institution/update/", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+  return data.institution;
+}
+
+/**
+ * The institution's pay-as-you-go bill: the live sum of `cost_incurred` over
+ * every candidate in the college, plus the advance credit to knock off it.
+ *
+ * `advance_paid` comes from the server rather than being hardcoded in the UI so
+ * the amount deducted can never disagree between the two sides.
+ */
+export type InstituteBilling = {
+  institution: {
+    name: string;
+    institution_type: string;
+    logo: string;
+  };
+  /** Sum of every candidate profile's cost consumed, in INR. */
+  total_cost_consumed: number;
+  /** Largest single-candidate cost, for the "most used student" figure. */
+  highest_candidate_cost: number;
+  /** Mean cost across the roll; 0 when the institute has no candidates. */
+  average_candidate_cost: number;
+  candidate_count: number;
+  /** Candidates who have burnt any cost at all. */
+  candidates_with_cost: number;
+  advance_paid: number;
+  generated_at: string;
+};
+
+export async function getInstituteBilling(): Promise<InstituteBilling> {
+  return apiFetch<InstituteBilling>("/api/institution/billing/");
+}
+
 // One member of the placement department. Members are ordinary ClientProfile
 // rows sharing the institution, so adding someone puts them straight into the
 // same dashboards.
 export type PlacementCellMember = {
   id: number;
-  user_id: number;
+  /** Null until the invited person signs up with this email. */
+  user_id: number | null;
   full_name: string;
   official_email: string;
   mobile_number: string;
@@ -2378,6 +2467,8 @@ export type PlacementCellMember = {
   avatar: string;
   access: "beta" | "master";
   is_master: boolean;
+  /** False while the roster entry is an invite nobody has signed up for yet. */
+  has_account: boolean;
   created_at: string | null;
 };
 
@@ -2403,11 +2494,11 @@ export type PlacementCellMemberPayload = {
   access?: "beta" | "master";
 };
 
+// No account is created here: the endpoint records the person on the college's
+// roster only. They sign up themselves with the same email and set their own
+// password, which claims the roster entry.
 export type PlacementCellMemberCreated = {
   member: PlacementCellMember;
-  // Returned once, immediately after the member is created, because the app has
-  // no password-reset flow. Show it and let the owner pass it along.
-  temporary_password: string;
 };
 
 export async function addPlacementCellMember(
@@ -2418,6 +2509,83 @@ export async function addPlacementCellMember(
     body: JSON.stringify(payload),
   });
   return data;
+}
+
+/**
+ * Take one member off the college's roster. Master access only, and the server
+ * refuses to remove the caller or the last remaining Master - so a rejected
+ * delete comes back as a message to show, not as a silent no-op.
+ */
+export async function removePlacementCellMember(id: number): Promise<void> {
+  await apiFetch<{ ok: boolean }>(`/api/placement-cell/members/${id}/`, { method: "DELETE" });
+}
+
+// ---------------------------------------------------------------------------
+// Classroom L&D sessions
+// ---------------------------------------------------------------------------
+
+/** One scheduled classroom session on the L&D board. */
+export type ClassroomLDSession = {
+  id: string;
+  topic: string;
+  agenda: string;
+  venue: string;
+  /** Free text, so a session can be campus-wide rather than tied to a course. */
+  department: string;
+  faculty_name: string;
+  /** ISO stamp from the server; display fields below are pre-formatted for the UI. */
+  starts_at: string;
+  ends_at: string;
+  starts_at_display: string;
+  starts_at_time: string;
+  ends_at_time: string;
+  duration_minutes: number;
+  /** True once the session's end time has passed. */
+  is_past: boolean;
+  created_at: string | null;
+};
+
+export type ClassroomLDSessions = {
+  /** Sorted soonest-first, sessions that have not finished yet. */
+  upcoming: ClassroomLDSession[];
+  /** Sorted most-recent-first, sessions that have already finished. */
+  done: ClassroomLDSession[];
+  counts: {
+    upcoming: number;
+    done: number;
+  };
+};
+
+export async function getClassroomLDSessions(): Promise<ClassroomLDSessions> {
+  return apiFetch<ClassroomLDSessions>("/api/classroom-ld-sessions/");
+}
+
+export type ClassroomLDSessionPayload = {
+  topic: string;
+  /** ISO stamps. `datetime-local` input values are sent through `new Date(...)`. */
+  starts_at: string;
+  ends_at: string;
+  agenda?: string;
+  venue?: string;
+  department?: string;
+  faculty_name?: string;
+};
+
+export type ClassroomLDSessionCreated = {
+  session: ClassroomLDSession;
+};
+
+export async function addClassroomLDSession(
+  payload: ClassroomLDSessionPayload,
+): Promise<ClassroomLDSessionCreated> {
+  return apiFetch<ClassroomLDSessionCreated>("/api/classroom-ld-sessions/create/", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function removeClassroomLDSession(id: string): Promise<void> {
+  await apiFetch<{ ok: boolean }>(`/api/classroom-ld-sessions/${id}/`, { method: "DELETE" });
 }
 
 export type PlacementStatus = "not_started" | "applying" | "shortlisted" | "placed";
@@ -2439,6 +2607,8 @@ export type StudentRecord = {
   start_year: number | null;
   end_year: number | null;
   mobile_number: string;
+  /** Profile photo URL; empty when the student has not uploaded one. */
+  avatar?: string;
   gender: string;
   cgpa: number | null;
   placement_status: PlacementStatus;
@@ -2456,7 +2626,6 @@ export type StudentRecord = {
   time_spent: number;
   /** Total Gemini spend burnt by this student in INR, including the 40% margin. */
   cost_incurred: number;
-  id_verified: boolean;
   account_status: string;
   created_at: string;
   performance_score: number | null;
@@ -2540,6 +2709,321 @@ export async function checkStudentsExist(emails: string[]): Promise<CheckStudent
   });
 }
 
+/** One "code, label" pair straight off a Django choices tuple. */
+export type ChoicePair = [string, string];
+
+/** The signed-in student's own auth account, as the staff record view sees it. */
+export type StudentAccount = {
+  id: number;
+  username: string;
+  email: string;
+  first_name: string;
+  last_name: string;
+  is_active: boolean;
+  is_staff: boolean;
+  date_joined: string | null;
+  last_login: string | null;
+};
+
+/**
+ * Every column on one CandidateProfile, as stored. The directory table only
+ * shows a handful; this is the full record a placement-cell officer reviews.
+ */
+export type StudentDetail = {
+  id: string;
+  full_name: string;
+  first_name: string;
+  middle_name: string;
+  last_name: string;
+  college: string;
+  college_id: string | null;
+  department: string;
+  program: string;
+  start_year: number | null;
+  end_year: number | null;
+  personal_email: string | null;
+  mobile_number: string;
+  avatar: string | null;
+  bio: string;
+  date_of_birth: string | null;
+  gender: string;
+  cgpa: number | null;
+  placement_status: string;
+  placement_eligible: boolean;
+  linkedin_url: string | null;
+  github_url: string | null;
+  portfolio_url: string | null;
+  skills: string[];
+  certifications: string[];
+  projects: unknown[];
+  internships: unknown[];
+  extracurricular_activities: string[];
+  preferred_roles: string[];
+  preferred_locations: string[];
+  preferred_language: string;
+  expected_ctc: number | null;
+  time_spent: number;
+  account_status: string;
+  last_login_at: string | null;
+  cost_incurred: number;
+  readiness_score: number | null;
+  readiness_overall_rank: number | null;
+  readiness_overall_total: number;
+  readiness_department_rank: number | null;
+  readiness_department_total: number;
+  readiness_components: Record<string, unknown>;
+  readiness_updated_at: string | null;
+  mock_interview_score: number | null;
+  mock_interview_rank: number | null;
+  mock_interview_total: number;
+  mock_interview_department_rank: number | null;
+  mock_interview_department_total: number;
+  self_training_score: number | null;
+  self_training_rank: number | null;
+  self_training_total: number;
+  self_training_department_rank: number | null;
+  self_training_department_total: number;
+  created_at: string | null;
+  updated_at: string | null;
+  /** False while the student is an email-only invite with no account yet. */
+  has_account: boolean;
+  account: StudentAccount | null;
+  ranks: ProfileRanks;
+  /** Option lists behind the choice columns, so codes can print as labels. */
+  choices: {
+    gender: ChoicePair[];
+    program: ChoicePair[];
+    placement_status: ChoicePair[];
+    account_status: ChoicePair[];
+  };
+};
+
+export type StudentDetailResponse = {
+  student: StudentDetail;
+  activity_url: string;
+};
+
+export async function getStudentData(studentId: string): Promise<StudentDetailResponse> {
+  return apiFetch<StudentDetailResponse>(`/api/students/${studentId}/`);
+}
+
+/** Key of one practice module; matches the per-module summary shapes below. */
+export type ActivityModuleKey =
+  | "mock_interview"
+  | "aplr"
+  | "basic_math"
+  | "situational"
+  | "technical"
+  | "dsa"
+  | "communication"
+  | "english"
+  | "gd";
+
+/** Latest / best / first score of a module, plus the mean across all of it. */
+export type ScoreTrend = {
+  avg_score: number | null;
+  latest_score: number | null;
+  best_score: number | null;
+  first_score: number | null;
+};
+
+export type MockInterviewSummary = ScoreTrend & {
+  sessions: number;
+  completed: number;
+  scored: number;
+  completion_rate: number | null;
+};
+
+export type QuestionModuleSummary = {
+  sessions: number;
+  solved: number;
+  gave_up: number;
+  active: number;
+  solve_rate: number | null;
+  avg_attempts: number | null;
+  avg_hints_used: number | null;
+  avg_points_awarded: number | null;
+  avg_star_rating: number | null;
+};
+
+/** Communication, English and GD all add a per-criterion mean block. */
+export type ScoredModuleSummary = ScoreTrend & {
+  sessions: number;
+  analyzed?: number;
+  avg_duration_minutes?: number | null;
+  averages: Record<string, number>;
+};
+
+export type ActivityModuleSummary =
+  MockInterviewSummary | QuestionModuleSummary | ScoredModuleSummary;
+
+export type GdCriterionScore = { label: string; score: number | null };
+
+/**
+ * One practice session, flattened out of whichever table it came from. The
+ * fields that only some modules have are optional for the same reason.
+ */
+export type ActivitySession = {
+  module: ActivityModuleKey;
+  module_label: string;
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at?: string;
+  // Mock interview.
+  company_name?: string | null;
+  role?: string | null;
+  duration?: string | null;
+  suspicion?: number;
+  panelists?: string[];
+  message_count?: number;
+  scored_dimensions?: number;
+  // APLR / Basic Math / Situational / Technical / DSA.
+  topic?: string | null;
+  category?: string | null;
+  attempts?: number;
+  hints_used?: number;
+  points_awarded?: number;
+  star_rating?: number;
+  solved_at?: string | null;
+  // Communication / English / GD.
+  phase?: string | null;
+  communication_score?: number | null;
+  writing_score?: number | null;
+  duration_minutes?: number | null;
+  grade?: string | null;
+  ended_at?: string | null;
+  finalized_at?: string | null;
+  scores?: Record<string, number | null>;
+  criteria?: GdCriterionScore[];
+  // Shared.
+  status: string;
+  overall_score: number | null;
+};
+
+export type StudentActivityResponse = {
+  student: {
+    id: string;
+    full_name: string;
+    department?: string;
+    program?: string;
+    end_year?: number | null;
+    has_account: boolean;
+  };
+  modules: { key: ActivityModuleKey; label: string; summary: ActivityModuleSummary }[];
+  sessions: ActivitySession[];
+  totals: {
+    sessions: number;
+    modules_used: number;
+    last_activity_at: string | null;
+  };
+  /** True when the record is longer than the response cap. */
+  truncated: boolean;
+};
+
+export async function getStudentActivity(studentId: string): Promise<StudentActivityResponse> {
+  return apiFetch<StudentActivityResponse>(`/api/student-activity/${studentId}/`);
+}
+
+/**
+ * The evidence behind one mock-interview session card: the whole stored
+ * transcript, in order, plus the panel's own closing remarks. Scoped on the
+ * server to the signed-in officer's own college.
+ */
+export type StudentInterviewEvidenceResponse = {
+  student: { id: string; full_name: string };
+  interview: MockInterviewDetail;
+};
+
+export async function getStudentInterviewEvidence(
+  interviewId: string,
+): Promise<StudentInterviewEvidenceResponse> {
+  return apiFetch<StudentInterviewEvidenceResponse>(
+    `/api/student-interview/${interviewId}/evidence/`,
+  );
+}
+
+/** One turn of a practice question's chat, exactly as the student chat stored it. */
+export type QuestionSessionTurn = {
+  role: string;
+  content: string;
+  created_at: string | null;
+};
+
+/**
+ * The evidence behind one question-module session card — APLR, Basic Math,
+ * Situational Problem Solving, Technical / Coding and DSA: the question as it
+ * was asked, every reply the student wrote, and the answer and solution stored
+ * against it. Scoped on the server to the signed-in officer's own college.
+ */
+export type QuestionSessionEvidenceResponse = {
+  student: { id: string; full_name: string };
+  module: ActivityModuleKey;
+  module_label: string;
+  session: {
+    id: string;
+    title: string;
+    category: string | null;
+    status: string;
+    question: string;
+    answer: string;
+    solution: string;
+    transcript: QuestionSessionTurn[];
+    attempts: number;
+    hints_used: number;
+    points_awarded: number;
+    star_rating: number;
+    solved_at: string | null;
+    created_at: string;
+    updated_at?: string;
+  };
+};
+
+export async function getQuestionSessionEvidence(
+  sessionId: string,
+): Promise<QuestionSessionEvidenceResponse> {
+  return apiFetch<QuestionSessionEvidenceResponse>(`/api/student-question/${sessionId}/evidence/`);
+}
+
+/**
+ * The evidence behind one English Writing session card: the chat as it happened,
+ * and every mistake Maya flagged in it. `original` is the phrase the student
+ * wrote and `corrected` is what to say instead, so the pair is the correction.
+ */
+export type EnglishSessionEvidenceResponse = {
+  student: { id: string; full_name: string };
+  module: ActivityModuleKey;
+  module_label: string;
+  session: {
+    id: string;
+    title: string;
+    status: string;
+    finalized_at: string | null;
+    created_at: string;
+    updated_at?: string;
+    /** Every dimension is null until the session was finalised and analysed. */
+    scores: Record<string, number | null>;
+    mistakes: {
+      turn_index: number;
+      category: string;
+      original: string;
+      corrected: string;
+      explanation: string;
+    }[];
+    transcript: QuestionSessionTurn[];
+    strengths: string;
+    areas_for_improvement: string;
+    recurring_mistakes: string;
+    ai_recommendations: string;
+  };
+};
+
+export async function getEnglishSessionEvidence(
+  sessionId: string,
+): Promise<EnglishSessionEvidenceResponse> {
+  return apiFetch<EnglishSessionEvidenceResponse>(`/api/student-english/${sessionId}/evidence/`);
+}
+
 export type LeaderboardStudent = StudentRecord & { is_self: boolean };
 
 export type LeaderboardResponse = {
@@ -2605,6 +3089,10 @@ export type PlacementDrive = {
   drive_id: number;
   company_id: string;
   company_name: string;
+  // Read off the drive's company, so every drive a company runs shows the same
+  // icon. Empty when no website was recorded or the favicon did not resolve.
+  company_logo: string;
+  website: string;
   title: string;
   industry: string;
   // One role per drive. Empty string when the drive has not named one yet.
@@ -2617,6 +3105,13 @@ export type PlacementDrive = {
   application_deadline: string | null;
   campus_visit_date: string | null;
   status: DriveStatus;
+  /**
+   * The status key as stored on the row (`upcoming` / `ongoing` / ...), which is
+   * not always what `status` says: a drive whose campus visit is today is
+   * reported as `Live` while the row may still read `upcoming`. Only the edit
+   * form reads this, to prefill from what is actually saved.
+   */
+  stored_status?: string;
   openings: number | null;
   eligible_courses: string[];
   eligible_branches: string[];
@@ -2765,7 +3260,7 @@ export type ReportsData = {
   industries: { industry: string; count: number }[];
   ctc_bands: { band: string; companies: number }[];
   tiers: { tier: DriveCompanyTier; label: string; count: number }[];
-  batch: { year: number; students: number; verified: number; unverified: number };
+  batch: { year: number; students: number };
 };
 
 export async function getReportsData(): Promise<ReportsData> {

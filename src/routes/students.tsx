@@ -28,13 +28,15 @@ import {
   Kpi,
   Panel,
   Pill,
+  chartAxisProps,
   chartColors,
   chartCursor,
   chartFill,
-  chartTooltip,
+  chartTooltipProps,
 } from "@/components/dash/bits";
 import { addStudents, checkStudentsExist, getInstitutionOverview, getStudents } from "@/lib/api";
 import type { ExistingStudent, PlacementStatus, StudentRecord } from "@/lib/api";
+import { GateLoading } from "@/components/load-state";
 
 export const Route = createFileRoute("/students")({
   // The header search in the dashboard shell lands here with a ?q= term, so the
@@ -61,10 +63,19 @@ export const Route = createFileRoute("/students")({
   component: StudentsPage,
 });
 
-const STATUS_OPTIONS: { value: "All" | "placed" | "not_placed"; label: string }[] = [
+// The filter lists the same five stages as the Placement Momentum chart, so the
+// dropdown and the funnel can never describe the pipeline differently.
+//
+// "Eligible" is not a placement_status - it is the readiness rule (score >= 40
+// and not not_started), so it travels on its own `eligible` query param instead.
+// See `statusFilterQuery` for how the choice is split into the two params.
+const STATUS_OPTIONS: { value: StatusFilter; label: string }[] = [
   { value: "All", label: "All statuses" },
+  { value: "ineligible", label: "Ineligible" },
+  { value: "eligible", label: "Eligible" },
+  { value: "applying", label: "Applied" },
+  { value: "shortlisted", label: "Shortlisted" },
   { value: "placed", label: "Placed" },
-  { value: "not_placed", label: "Not Placed" },
 ];
 
 // The stored key stays "not_started" for historical rows; it reads as
@@ -83,30 +94,6 @@ function statusTone(status: PlacementStatus): "solid" | "outline" | "muted" {
   return "outline";
 }
 
-/** Lifetime platform minutes as "2h 15m" / "45 min". */
-function fmtDuration(minutes?: number | null) {
-  const total = Math.max(0, Math.round(minutes ?? 0));
-  const hours = Math.floor(total / 60);
-  const mins = total % 60;
-  return hours === 0 ? `${mins} min` : `${hours}h ${mins}m`;
-}
-
-/** AI spend in INR to the paisa; it accrues in fractions of a rupee. */
-function fmtInr(value?: number | null) {
-  if (value == null) return "—";
-  return `₹${value.toLocaleString("en-IN", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
-}
-
-function fmtDate(value?: string | null) {
-  if (!value) return "—";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "—";
-  return date.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
-}
-
 // Whether this student counts as placement eligible anywhere in the product.
 // Eligibility is decided once, server-side, from the readiness score
 // (score >= 40). Reading the resolved flag rather than recomputing it here is
@@ -114,6 +101,22 @@ function fmtDate(value?: string | null) {
 // pools: there is only one rule and only one implementation of it.
 function isEligible(s: StudentRecord): boolean {
   return s.placement_eligible;
+}
+
+type StatusFilter = "All" | "ineligible" | "eligible" | "applying" | "shortlisted" | "placed";
+
+// The filter's vocabulary and the stored column's vocabulary are not the same
+// words: the UI says Ineligible / Applied where the column stores
+// not_started / applying. Keeping the translation in one place is what stops the
+// dropdown silently returning an empty list from a value the column never stores
+// - the backend has no allowlist, it just filters on whatever it is given.
+//
+// "Eligible" has no column value at all; it is the readiness rule, so it sets
+// `eligible: true` and leaves `status` alone rather than fabricating a status.
+function statusFilterQuery(filter: StatusFilter): { status?: string; eligible?: boolean } {
+  if (filter === "All") return {};
+  if (filter === "eligible") return { eligible: true };
+  return { status: filter === "ineligible" ? "not_started" : filter };
 }
 
 const CSV_COLUMNS: [keyof StudentRecord | ((s: StudentRecord) => unknown), string][] = [
@@ -135,6 +138,33 @@ function csvCell(value: unknown) {
   if (value === null || value === undefined) return "";
   const text = String(value);
   return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function niceStepFor(max: number, targetTicks = 5) {
+  if (max <= 0) return 1;
+  const rough = max / Math.max(1, targetTicks - 1);
+  const pow = Math.pow(10, Math.floor(Math.log10(rough)));
+  const mant = rough / pow;
+  let step = pow;
+  if (mant <= 1.2) step = pow;
+  else if (mant <= 1.8) step = 2 * pow;
+  else if (mant <= 3.5) step = 2.5 * pow;
+  else if (mant <= 7) step = 5 * pow;
+  else step = 10 * pow;
+  return Math.max(1, Math.ceil(step));
+}
+
+function niceCountAxis(max: number) {
+  const step = niceStepFor(max);
+  const top = Math.ceil(max / step) * step;
+  const ticks: number[] = [];
+  for (let v = 0; v <= top; v += step) {
+    ticks.push(v);
+  }
+  if (ticks.length === 0) {
+    ticks.push(0, Math.max(1, Math.round(max)));
+  }
+  return { max: top, ticks };
 }
 
 function downloadStudentsCsv(rows: StudentRecord[], fileLabel: string) {
@@ -163,15 +193,22 @@ function StudentsPage() {
   const navigate = useNavigate();
   const { q: qFromUrl } = Route.useSearch();
   const [rows, setRows] = useState<StudentRecord[] | null>(null);
+  // Both reads below are needed before any of this page is worth drawing: the
+  // roll drives the KPIs and the table, the institution record drives the branch
+  // chart and the department filter. Rendering the moment `rows` lands would put
+  // the shell up with empty numbers and then visibly re-fill them, which reads
+  // as a page that is still loading rather than one that is done. So the first
+  // load is covered by the full-screen loader; later filter changes keep the page
+  // on screen and just refresh in place.
+  const [settled, setSettled] = useState({ roll: false, institution: false });
   const [collegeTotal, setCollegeTotal] = useState<number | null>(null);
   const [collegeStrength, setCollegeStrength] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [q, setQ] = useState(qFromUrl ?? "");
   const [dept, setDept] = useState<string>("All");
-  const [status, setStatus] = useState<string>("All");
+  const [status, setStatus] = useState<StatusFilter>("All");
   const [minCgpa, setMinCgpa] = useState(0);
   const [sort, setSort] = useState<"name" | "cgpa" | "expected_ctc" | "performance">("cgpa");
-  const [selected, setSelected] = useState<StudentRecord | null>(null);
   const [addingStudents, setAddingStudents] = useState(false);
   const [page, setPage] = useState(0);
   // The college's own departments, as configured on the institution record. Both
@@ -193,7 +230,10 @@ function StudentsPage() {
         setInstitutionName(res.institution.name || null);
       })
       // Non-fatal: the chart and filter then fall back to having no departments.
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setSettled((s) => ({ ...s, institution: true }));
+      });
     return () => {
       cancelled = true;
     };
@@ -228,9 +268,8 @@ function StudentsPage() {
     const query: Parameters<typeof getStudents>[0] = {
       q: qFromUrl ?? "",
       dept,
-      status,
-      eligible: false,
       sort,
+      ...statusFilterQuery(status),
     };
     if (minCgpa > 0) query.min_cgpa = minCgpa;
     getStudents(query)
@@ -244,11 +283,19 @@ function StudentsPage() {
         if (cancelled) return;
         setError(err instanceof Error ? err.message : "Could not load students.");
         setRows([]);
+      })
+      .finally(() => {
+        if (!cancelled) setSettled((s) => ({ ...s, roll: true }));
       });
     return () => {
       cancelled = true;
     };
   }, [dept, status, minCgpa, sort, qFromUrl, reloadToken]);
+
+  // Held until both first reads land, so the page never paints half-built.
+  if (!(settled.roll && settled.institution)) {
+    return <GateLoading />;
+  }
 
   const filtered = rows ?? [];
   const placed = filtered.filter((s) => s.placement_status === "placed");
@@ -278,6 +325,12 @@ function StudentsPage() {
     { stage: "Placed", value: placed.length },
   ];
   const momentumMax = Math.max(1, ...momentum.map((m) => m.value));
+  // Whole-student counts, so the axis must be told to stop inventing fractions.
+  // Recharts divides the domain by the tick count and will happily label a
+  // headcount axis 0 / 11.75 / 23.5 / 35.25 / 47 — gaps no one can read a count
+  // off. Round the top up to a whole number and step it by a round interval, so
+  // every gap is an integer and the axis still ends above the tallest bar.
+  const momentumAxis = niceCountAxis(momentumMax);
 
   // The chart shows exactly the departments listed on the institution record and
   // nothing else: one bar per configured department, counting only the students
@@ -304,11 +357,7 @@ function StudentsPage() {
   return (
     <Shell
       title="Students"
-      subtitle={
-        rows === null
-          ? "Loading the live batch…"
-          : `${filtered.length} of the live batch match the current filters`
-      }
+      subtitle={`${filtered.length} of the live batch match the current filters`}
       actions={
         <div className="flex items-center gap-2">
           <button
@@ -359,14 +408,23 @@ function StudentsPage() {
                 dataKey="label"
                 tickLine={false}
                 axisLine={false}
-                fontSize={10}
-                angle={-35}
-                textAnchor="end"
+                tick={{ fill: chartColors.axis, fontSize: 10 }}
                 interval={0}
-                height={64}
+                height={24}
+                textAnchor="middle"
+                tickFormatter={(value: string) => {
+                  if (!value) return value;
+                  const trimmed = value.trim();
+                  return trimmed.length > 14 ? `${trimmed.slice(0, 12)}…` : trimmed;
+                }}
               />
-              <YAxis tickLine={false} axisLine={false} fontSize={11} allowDecimals={false} />
-              <Tooltip contentStyle={chartTooltip} cursor={chartCursor} />
+              <YAxis
+                tickLine={false}
+                axisLine={false}
+                tick={{ fill: chartColors.axis, fontSize: 11 }}
+                allowDecimals={false}
+              />
+              <Tooltip {...chartTooltipProps} cursor={chartCursor} />
               <Bar
                 dataKey="total"
                 name="Students"
@@ -395,14 +453,19 @@ function StudentsPage() {
           <ResponsiveContainer width="100%" height={268}>
             <BarChart data={momentum} margin={{ left: -18, right: 6, top: 6 }}>
               <CartesianGrid stroke={chartColors.grid} vertical={false} />
-              <XAxis dataKey="stage" tickLine={false} axisLine={false} fontSize={11} />
-              <YAxis tickLine={false} axisLine={false} fontSize={11} domain={[0, momentumMax]} />
-              <Tooltip contentStyle={chartTooltip} cursor={chartCursor} />
+              <XAxis dataKey="stage" {...chartAxisProps} />
+              <YAxis
+                {...chartAxisProps}
+                domain={[0, momentumAxis.max]}
+                ticks={momentumAxis.ticks}
+                allowDecimals={false}
+              />
+              <Tooltip {...chartTooltipProps} cursor={chartCursor} />
               <Bar dataKey="value" name="Students" radius={[4, 4, 0, 0]} barSize={44}>
                 {momentum.map((d, i) => (
                   <Cell key={d.stage} fill={chartFill(i)} />
                 ))}
-                <LabelList dataKey="value" position="top" fontSize={11} fill="oklch(0.35 0 0)" />
+                <LabelList dataKey="value" position="top" fontSize={11} fill={chartColors.label} />
               </Bar>
             </BarChart>
           </ResponsiveContainer>
@@ -454,7 +517,7 @@ function StudentsPage() {
           </select>
           <select
             value={status}
-            onChange={(e) => setStatus(e.target.value)}
+            onChange={(e) => setStatus(e.target.value as StatusFilter)}
             className="h-9 rounded-md border border-input bg-card px-3 text-sm outline-none"
           >
             {STATUS_OPTIONS.map((s) => (
@@ -502,8 +565,6 @@ function StudentsPage() {
                   "Rank",
                   "Status",
                   "Expected CTC",
-                  "Eligibility",
-                  "",
                 ].map((h) => (
                   <th key={h} className="mono-label px-5 py-3 font-normal">
                     {h}
@@ -526,18 +587,12 @@ function StudentsPage() {
                     {s.performance_score != null ? s.performance_score.toFixed(1) : "—"}
                   </td>
                   <td className="px-5 py-3 text-xs">
+                    {/* Just the position, not "4 of 10": the cohort size is the same
+                        for every row on the page, so printing it per row is noise,
+                        and the department rank beside it is a second number
+                        competing for the same cell. */}
                     {s.overall_rank != null ? (
-                      <>
-                        <span className="font-mono font-semibold tabular-nums">
-                          #{s.overall_rank}
-                        </span>
-                        <span className="text-muted-foreground"> / {s.overall_total}</span>
-                        {s.department_rank != null && (
-                          <span className="block text-[10px] text-muted-foreground">
-                            Dept #{s.department_rank} / {s.department_total}
-                          </span>
-                        )}
-                      </>
+                      <span className="font-mono font-semibold tabular-nums">#{s.overall_rank}</span>
                     ) : (
                       <span className="text-muted-foreground">—</span>
                     )}
@@ -548,39 +603,33 @@ function StudentsPage() {
                     </Pill>
                   </td>
                   <td className="px-5 py-3 text-xs">
+                    {/* Whole lakhs. A recruiter quotes 12 LPA, not 11.8 - a decimal
+                        here reads as false precision on a modelled number. */}
                     {s.expected_ctc ? (
-                      <span className="font-medium">₹{s.expected_ctc.toFixed(1)} LPA</span>
-                    ) : (
-                      <span className="text-muted-foreground">—</span>
-                    )}
-                  </td>
-                  <td className="px-5 py-3">
-                    {isEligible(s) ? (
-                      <Pill tone="solid">Eligible</Pill>
+                      <span className="font-medium tabular-nums">
+                        ₹{Math.round(s.expected_ctc)} LPA
+                      </span>
                     ) : (
                       <span className="text-muted-foreground">—</span>
                     )}
                   </td>
                   <td className="px-5 py-3 text-right">
-                    <button
-                      onClick={() => setSelected(s)}
-                      className="rounded-md border border-border px-2.5 py-1.5 text-xs font-medium transition-colors hover:bg-accent"
+                    {/* A separate page, not a modal: the full record is its own
+                        read and its own screen. */}
+                    <Link
+                      to="/student-data/$studentId"
+                      params={{ studentId: s.id }}
+                      className="inline-block rounded-md border border-border px-2.5 py-1.5 text-xs font-medium transition-colors hover:bg-accent"
                     >
                       Profile
-                    </button>
+                    </Link>
                   </td>
                 </tr>
               ))}
               {rowsOnPage.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="px-5 py-12 text-center text-sm text-muted-foreground">
-                    {rows === null ? (
-                      <span className="inline-flex items-center gap-2">
-                        <Loader2 className="size-4 animate-spin" /> Loading students…
-                      </span>
-                    ) : (
-                      (error ?? "No students match these filters.")
-                    )}
+                  <td colSpan={8} className="px-5 py-12 text-center text-sm text-muted-foreground">
+                    {error ?? "No students match these filters."}
                   </td>
                 </tr>
               )}
@@ -610,7 +659,6 @@ function StudentsPage() {
         </div>
       </Panel>
 
-      {selected && <StudentModal student={selected} onClose={() => setSelected(null)} />}
       {addingStudents && (
         <AddStudentsModal
           institutionName={institutionName}
@@ -619,225 +667,6 @@ function StudentsPage() {
         />
       )}
     </Shell>
-  );
-}
-
-function StudentModal({ student, onClose }: { student: StudentRecord; onClose: () => void }) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-foreground/40 p-4 sm:items-center">
-      <div className="panel max-h-[88vh] w-full max-w-2xl overflow-y-auto">
-        <div className="flex items-start justify-between border-b border-border px-6 py-5">
-          <div className="flex items-center gap-4">
-            <div className="grid size-12 place-items-center rounded-md bg-primary font-display text-sm font-bold text-primary-foreground">
-              {student.full_name
-                .split(" ")
-                .map((n) => n[0])
-                .slice(0, 2)
-                .join("")}
-            </div>
-            <div>
-              <h2 className="text-lg font-bold">{student.full_name}</h2>
-              <p className="font-mono text-xs text-muted-foreground">
-                {student.department ?? "—"}
-                {student.program ? ` · ${student.program}` : ""}
-              </p>
-            </div>
-          </div>
-          <button onClick={onClose} aria-label="Close" className="rounded-md p-1 hover:bg-accent">
-            <X className="size-4" />
-          </button>
-        </div>
-
-        {student.bio && (
-          <div className="border-b border-border px-6 py-4">
-            <p className="mono-label">Headline</p>
-            <p className="mt-1.5 text-sm italic text-muted-foreground">{student.bio}</p>
-          </div>
-        )}
-
-        <div className="grid gap-4 px-6 py-5 sm:grid-cols-2">
-          {[
-            ["CGPA", student.cgpa?.toFixed(2) ?? "—"],
-            [
-              "Readiness score",
-              student.performance_score != null ? student.performance_score.toFixed(1) : "—",
-            ],
-            [
-              "All Institute Rank",
-              student.overall_rank != null
-                ? `#${student.overall_rank} of ${student.overall_total}`
-                : "—",
-            ],
-            [
-              "Department rank",
-              student.department_rank != null
-                ? `#${student.department_rank} of ${student.department_total}`
-                : "—",
-            ],
-            ["Batch", `${student.start_year ?? "—"} – ${student.end_year ?? "—"}`],
-            [
-              "Status",
-              student.placement_status
-                ? (STATUS_LABEL[student.placement_status] ?? student.placement_status)
-                : "—",
-            ],
-            [
-              "Expected CTC",
-              student.expected_ctc ? `₹${student.expected_ctc.toFixed(1)} LPA` : "—",
-            ],
-            ["Placement eligible", isEligible(student) ? "Yes" : "No"],
-            ["ID verified", student.id_verified ? "Yes" : "Pending"],
-            ["Phone", student.mobile_number ?? "—"],
-            ["Gender", student.gender ? student.gender.replace(/_/g, " ") : "—"],
-            ["Account", student.account_status ? student.account_status.replace(/_/g, " ") : "—"],
-            ["Preferred language", student.preferred_language ?? "—"],
-            ["Joined", fmtDate(student.created_at)],
-            ["Time on platform", fmtDuration(student.time_spent)],
-            ["AI cost consumed", fmtInr(student.cost_incurred)],
-          ].map(([label, value]) => (
-            <div key={label} className="rounded-md border border-border px-3.5 py-2.5">
-              <p className="mono-label">{label}</p>
-              <p className="mt-1 truncate text-sm font-medium">{value}</p>
-            </div>
-          ))}
-        </div>
-
-        <div className="grid gap-4 px-6 pb-5 sm:grid-cols-2">
-          <div>
-            <p className="mono-label">Skills</p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {(student.skills?.length ?? 0) > 0 ? (
-                student.skills.map((s) => (
-                  <Pill key={s} tone="outline">
-                    {s}
-                  </Pill>
-                ))
-              ) : (
-                <span className="text-sm text-muted-foreground">No skills recorded.</span>
-              )}
-            </div>
-          </div>
-          <div>
-            <p className="mono-label">Preferred roles</p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {(student.preferred_roles?.length ?? 0) > 0 ? (
-                student.preferred_roles.map((r) => (
-                  <Pill key={r} tone="outline">
-                    {r}
-                  </Pill>
-                ))
-              ) : (
-                <span className="text-sm text-muted-foreground">None recorded.</span>
-              )}
-            </div>
-          </div>
-        </div>
-
-        <div className="grid gap-4 px-6 pb-5 sm:grid-cols-2">
-          <div>
-            <p className="mono-label">Preferred locations</p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {(student.preferred_locations?.length ?? 0) > 0 ? (
-                student.preferred_locations.map((loc) => (
-                  <Pill key={loc} tone="outline">
-                    {loc}
-                  </Pill>
-                ))
-              ) : (
-                <span className="text-sm text-muted-foreground">None recorded.</span>
-              )}
-            </div>
-          </div>
-          <div>
-            <p className="mono-label">Extracurricular activities</p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {(student.extracurricular_activities?.length ?? 0) > 0 ? (
-                student.extracurricular_activities.map((a) => (
-                  <Pill key={a} tone="outline">
-                    {a}
-                  </Pill>
-                ))
-              ) : (
-                <span className="text-sm text-muted-foreground">None recorded.</span>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {student.performance && (
-          <div className="px-6 pb-5">
-            <p className="mono-label">Readiness breakdown</p>
-            <div className="mt-2 grid gap-2 sm:grid-cols-2">
-              {(
-                [
-                  [
-                    "Mock interviews",
-                    student.performance.mock_interview,
-                    `${student.performance.mock_interviews} analysed`,
-                  ],
-                  [
-                    "Self-training",
-                    student.performance.self_training,
-                    `${student.performance.modules.length} modules`,
-                  ],
-                  [
-                    "TalentBro chat",
-                    student.performance.chat,
-                    `${student.performance.chat_messages} messages`,
-                  ],
-                ] as [string, number | null, string][]
-              ).map(([label, score, detail]) => (
-                <div key={label} className="rounded-md border border-border px-3.5 py-2.5">
-                  <div className="flex items-baseline justify-between gap-3">
-                    <span className="text-xs font-medium">{label}</span>
-                    <span className="font-mono text-xs font-semibold tabular-nums">
-                      {score != null ? Math.round(score) : "—"}
-                    </span>
-                  </div>
-                  <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-muted">
-                    <div
-                      className="h-full rounded-full bg-emerald-500"
-                      style={{
-                        width: `${score != null ? Math.max(0, Math.min(100, score)) : 0}%`,
-                      }}
-                    />
-                  </div>
-                  {detail && <p className="mt-1 text-[10px] text-muted-foreground">{detail}</p>}
-                </div>
-              ))}
-            </div>
-            {student.performance.modules.length > 0 && (
-              <div className="mt-3 flex flex-wrap gap-2">
-                {student.performance.modules.map((m) => (
-                  <Pill key={m.key} tone="outline">
-                    {m.label} · {m.score}
-                  </Pill>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border px-6 py-4">
-          <Link
-            to="/student-message"
-            search={{ peer: student.id }}
-            onClick={onClose}
-            className="rounded-md border border-border px-3.5 py-2 text-xs font-medium transition-colors hover:bg-accent"
-          >
-            Message student
-          </Link>
-          <Link
-            to="/student-detail/$studentId"
-            params={{ studentId: student.id }}
-            onClick={onClose}
-            className="rounded-md bg-primary px-3.5 py-2 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
-          >
-            Open readiness profile
-          </Link>
-        </div>
-      </div>
-    </div>
   );
 }
 

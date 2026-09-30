@@ -5,12 +5,15 @@ import {
   Briefcase,
   Building2,
   CalendarClock,
+  ExternalLink,
   GraduationCap,
   IndianRupee,
   MapPin,
   Sparkles,
 } from "lucide-react";
 import { AppNavHeader } from "@/components/tb/app-nav";
+import { CompanyMark } from "@/components/dash/CompanyMark";
+import { companyWebsiteHref } from "@/lib/company-website";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { GateLoading } from "@/components/load-state";
@@ -102,6 +105,9 @@ function CompanyDetailPage() {
 
   const { company, drives } = data;
   const aiBlocks = company.company_ai_info;
+  // Null when the stored value is not a usable http(s) address; the link is then
+  // simply not rendered rather than pointing somewhere unsafe.
+  const websiteHref = companyWebsiteHref(company.website);
 
   const facts: [string, string][] = [
     ["Work location", company.work_location || "—"],
@@ -128,9 +134,10 @@ function CompanyDetailPage() {
           </Link>
 
           <header className="mt-4 flex items-start gap-3">
-            <span className="grid size-12 shrink-0 place-items-center rounded-xl border border-border bg-card">
-              <Building2 className="size-6" />
-            </span>
+            <CompanyMark
+              company={company}
+              className="size-12 shrink-0 rounded-xl border border-border"
+            />
             <div className="min-w-0">
               <h1 className="font-display text-2xl font-bold tracking-tight">
                 {company.company_name}
@@ -144,6 +151,17 @@ function CompanyDetailPage() {
                   <span className="font-mono text-xs text-muted-foreground">
                     {company.company_id}
                   </span>
+                )}
+                {websiteHref && (
+                  <a
+                    href={websiteHref}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    className="inline-flex items-center gap-1 font-mono text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                  >
+                    {company.website}
+                    <ExternalLink className="size-3" />
+                  </a>
                 )}
               </div>
             </div>

@@ -29,6 +29,7 @@ import { AppNavHeader, AppNavIconButton } from "@/components/tb/app-nav";
 import { getReadinessLeaderboard, me, type LeaderboardResponse } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { GateError, GateLoading } from "@/components/load-state";
+import { chartAxisProps, chartColors, chartRamp, chartTooltipProps } from "@/components/dash/bits";
 
 const title = "Leaderboard | TalentBro";
 const description = "Where you stand against your college.";
@@ -257,11 +258,11 @@ function LeaderboardPage() {
 
   const distribution = useMemo(() => {
     const buckets = [
-      { key: "0–19", label: "0–19", min: 0, max: 19, count: 0, color: "oklch(0.82 0 0)" },
-      { key: "20–39", label: "20–39", min: 20, max: 39, count: 0, color: "oklch(0.72 0 0)" },
-      { key: "40–59", label: "40–59", min: 40, max: 59, count: 0, color: "oklch(0.55 0 0)" },
-      { key: "60–79", label: "60–79", min: 60, max: 79, count: 0, color: "oklch(0.4 0 0)" },
-      { key: "80–100", label: "80–100", min: 80, max: 100, count: 0, color: "oklch(0.2 0 0)" },
+      { key: "0–19", label: "0–19", min: 0, max: 19, count: 0, color: chartRamp[0] },
+      { key: "20–39", label: "20–39", min: 20, max: 39, count: 0, color: chartRamp[1] },
+      { key: "40–59", label: "40–59", min: 40, max: 59, count: 0, color: chartRamp[2] },
+      { key: "60–79", label: "60–79", min: 60, max: 79, count: 0, color: chartRamp[3] },
+      { key: "80–100", label: "80–100", min: 80, max: 100, count: 0, color: chartRamp[0] },
     ];
     for (const s of data?.students ?? []) {
       const score = s.performance_score;
@@ -394,16 +395,12 @@ function LeaderboardPage() {
               <div className="p-4">
                 <ResponsiveContainer width="100%" height={220}>
                   <LineChart data={distribution} margin={{ left: -14, right: 8, top: 8 }}>
-                    <CartesianGrid stroke="oklch(0.9 0 0)" vertical={false} />
-                    <XAxis dataKey="label" tickLine={false} axisLine={false} fontSize={11} />
-                    <YAxis tickLine={false} axisLine={false} fontSize={11} allowDecimals={false} />
+                    <CartesianGrid stroke={chartColors.grid} vertical={false} />
+                    <XAxis dataKey="label" {...chartAxisProps} />
+                    <YAxis {...chartAxisProps} allowDecimals={false} />
                     <Tooltip
-                      contentStyle={{
-                        borderRadius: 12,
-                        border: "1px solid oklch(0.9 0 0)",
-                        background: "oklch(1 0 0)",
-                      }}
-                      cursor={{ stroke: "oklch(0 0 0 / 0.2)", strokeDasharray: 4 }}
+                      {...chartTooltipProps}
+                      cursor={{ stroke: chartColors.axis, strokeDasharray: 4 }}
                       formatter={(value: number | string | Array<number | string>) => [
                         `${value} student${Number(value) === 1 ? "" : "s"}`,
                         "Score band",
@@ -440,11 +437,7 @@ function LeaderboardPage() {
                         tick={{ fontSize: 9, fill: "currentColor", opacity: 0.4 }}
                       />
                       <Tooltip
-                        contentStyle={{
-                          borderRadius: 12,
-                          border: "1px solid oklch(0.9 0 0)",
-                          background: "oklch(1 0 0)",
-                        }}
+                        {...chartTooltipProps}
                         formatter={(value: number | string | Array<number | string>) => [
                           `${Number(value).toFixed(1)}/100`,
                           "College avg",

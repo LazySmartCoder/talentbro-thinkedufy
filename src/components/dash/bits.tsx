@@ -109,28 +109,83 @@ export function Bar({ value, max = 100 }: { value: number; max?: number }) {
   );
 }
 
+/*
+ * Chart ink.
+ *
+ * These are CSS variables rather than colours so a chart follows the theme:
+ * recharts writes whatever it is given straight onto an SVG `fill`/`stroke`,
+ * and `var()` resolves there, so flipping `.dark` re-inks every chart with no
+ * prop needing to know a theme exists. The light/dark values live in
+ * `styles.css` next to the rest of the palette.
+ */
 export const chartColors = {
-  ink: "oklch(0.14 0 0)",
-  mid: "oklch(0.5 0 0)",
-  light: "oklch(0.78 0 0)",
-  grid: "oklch(0.9 0 0)",
+  ink: "var(--chart-ink)",
+  mid: "var(--chart-mid)",
+  light: "var(--chart-light)",
+  faint: "var(--chart-faint)",
+  grid: "var(--chart-grid)",
+  // Axis ticks and the value labels drawn on top of a bar. These were the
+  // hardcoded dark greys that disappeared against a dark card.
+  axis: "var(--chart-axis)",
+  label: "var(--chart-label)",
 };
 
 // Every dashboard chart shares one tooltip look and one ink→light ramp so a bar
 // in the students table and a bar in the placement-cell funnel read as the same
 // system. `chartFill(index)` walks the ramp for a categorical series.
+//
+// Recharts' default tooltip content is where dark-mode text goes missing, and
+// it takes three separate props to fix. Spread {@link chartTooltipProps} onto
+// the `<Tooltip>` rather than passing `contentStyle` on its own.
+//
+// The non-obvious one is `itemStyle`. Recharts paints each item row with the
+// *series* colour (`entry.color`, i.e. the bar's own fill) as an inline style on
+// that row — so a light bar colour renders as washed-out text on the dark
+// surface, and it beats the wrapper's `color` because it is set on the row
+// itself. `labelStyle` has the same problem on the bold header line.
 export const chartTooltip = {
   borderRadius: 8,
-  border: "1px solid oklch(0.9 0 0)",
-  background: "oklch(1 0 0)",
+  border: "1px solid var(--chart-surface-border)",
+  // Recharts hardcodes `backgroundColor: '#fff'` as its own default and only
+  // lets `contentStyle` override it, so this has to be `backgroundColor` rather
+  // than the `background` shorthand to actually replace it.
+  backgroundColor: "var(--chart-surface)",
+  color: "var(--chart-surface-fg)",
   fontSize: 12,
   fontFamily: "inherit",
 } as const;
 
-export const chartCursor = { fill: "oklch(0 0 0 / 0.04)" } as const;
+export const chartTooltipLabel = { color: "var(--chart-surface-fg)", fontWeight: 600 } as const;
 
-export const chartRamp = [chartColors.ink, chartColors.mid, chartColors.light, "oklch(0.87 0 0)"];
+export const chartTooltipItem = { color: "var(--chart-surface-fg)" } as const;
+
+/**
+ * The whole tooltip appearance as one spreadable object:
+ * `<Tooltip {...chartTooltipProps} cursor={chartCursor} />`.
+ */
+export const chartTooltipProps = {
+  contentStyle: chartTooltip,
+  labelStyle: chartTooltipLabel,
+  itemStyle: chartTooltipItem,
+} as const;
+
+export const chartCursor = { fill: "var(--chart-cursor)" } as const;
+
+export const chartRamp = [chartColors.ink, chartColors.mid, chartColors.light, chartColors.faint];
 
 export function chartFill(index: number): string {
   return chartRamp[index % chartRamp.length] ?? chartColors.ink;
 }
+
+/**
+ * Axis props for a chart that has no custom axis rendering.
+ *
+ * Recharts' own default tick colour is a mid grey chosen for a white chart
+ * background, which is why ticks were hard to read in dark mode. Pair it with
+ * {@link chartTooltip} and a chart is legible in both themes.
+ */
+export const chartAxisProps = {
+  tickLine: false,
+  axisLine: false,
+  tick: { fill: chartColors.axis, fontSize: 11 },
+} as const;

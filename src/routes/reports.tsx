@@ -16,10 +16,10 @@ import {
   Bar,
   Kpi,
   Panel,
-  Pill,
+  chartAxisProps,
   chartColors,
   chartCursor,
-  chartTooltip,
+  chartTooltipProps,
 } from "@/components/dash/bits";
 import { getReportsData, type ReportsData } from "@/lib/api";
 import { randomMotivationQuote } from "@/lib/quotes";
@@ -60,10 +60,10 @@ function buildReportCsv(data: ReportsData) {
   lines.push(`Recruiters,${data.kpis.recruiters}`);
   lines.push(`Openings,${data.kpis.openings}`);
   lines.push(`Batch year,${data.batch.year}`);
-  lines.push(`Verified profiles,${data.batch.verified}`);
-  lines.push(`Unverified profiles,${data.batch.unverified}`);
   lines.push("");
-  lines.push("Department,Students,Eligible (readiness 40+),Placed,Rate (%),Avg CGPA,Avg expected CTC (LPA)");
+  lines.push(
+    "Department,Students,Eligible (readiness 40+),Placed,Rate (%),Avg CGPA,Avg expected CTC (LPA)",
+  );
   for (const d of data.depts) {
     lines.push(
       [d.department, d.total, d.eligible, d.placed, d.rate, d.avg_cgpa, d.avg_expected_ctc]
@@ -181,9 +181,9 @@ function ReportsPage() {
           <ResponsiveContainer width="100%" height={252}>
             <LineChart data={data.monthly} margin={{ left: -18, right: 6, top: 6 }}>
               <CartesianGrid stroke={chartColors.grid} vertical={false} />
-              <XAxis dataKey="month" tickLine={false} axisLine={false} fontSize={11} />
-              <YAxis tickLine={false} axisLine={false} fontSize={11} />
-              <Tooltip contentStyle={chartTooltip} cursor={chartCursor} />
+              <XAxis dataKey="month" {...chartAxisProps} />
+              <YAxis {...chartAxisProps} />
+              <Tooltip {...chartTooltipProps} cursor={chartCursor} />
               <Line
                 type="monotone"
                 dataKey="students"
@@ -311,21 +311,6 @@ function ReportsPage() {
               </p>
             )}
           </div>
-        </Panel>
-      </div>
-
-      <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        <Panel title="Verified Profiles" description="By the placement cell">
-          <div className="flex items-center justify-between">
-            <span className="text-2xl font-bold">{data.batch.verified}</span>
-            <Pill tone={data.batch.unverified > 0 ? "outline" : "solid"}>
-              {data.batch.unverified} pending
-            </Pill>
-          </div>
-          <p className="mt-2 font-mono text-[11px] text-muted-foreground">
-            {Math.round((data.batch.verified / Math.max(1, data.batch.students)) * 100)}% of batch
-            verified
-          </p>
         </Panel>
       </div>
     </Shell>

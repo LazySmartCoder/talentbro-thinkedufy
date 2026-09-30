@@ -1,11 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { randomMotivationQuote, sampleMotivationQuotes } from "@/lib/quotes";
+import { shouldShowLoadingQuotes } from "@/lib/user-role";
 
 // Full-page "Loading…" gate. Shows an animated spinner immediately and, if the
 // request lingers, a short hint so a slow server never looks like a frozen
 // white screen.
+//
+// The motivation quote is for candidates. College staff see the spinner alone —
+// they are not the audience for "your competition is practicing" — so the gate
+// asks the remembered account role rather than re-reading the session, which
+// would just be more waiting on top of the wait being covered.
 export function GateLoading({ slowHintMs = 6000 }: { slowHintMs?: number }) {
   const [slow, setSlow] = useState(false);
+  const [showQuotes] = useState(shouldShowLoadingQuotes);
   const [quote] = useState(randomMotivationQuote);
   useEffect(() => {
     const timer = setTimeout(() => setSlow(true), slowHintMs);
@@ -18,7 +25,7 @@ export function GateLoading({ slowHintMs = 6000 }: { slowHintMs?: number }) {
         aria-hidden
         className="size-7 animate-spin rounded-full border-2 border-border border-t-foreground"
       />
-      <p className="max-w-md text-center text-sm leading-relaxed">{quote}</p>
+      {showQuotes && <p className="max-w-md text-center text-sm leading-relaxed">{quote}</p>}
       {slow && (
         <p className="max-w-xs text-center text-xs leading-relaxed text-muted-foreground/80">
           Still working — this can take a moment when the server is busy. If it doesn&rsquo;t finish
@@ -125,8 +132,12 @@ export function QuoteSplashContent({
 // Render `splash` before the page content until splashDone turns true.
 export function useQuoteSplash() {
   const [splashDone, setSplashDone] = useState(false);
-  const splash = !splashDone ? <QuoteSplash onDone={() => setSplashDone(true)} /> : null;
-  return { splashDone, splash };
+  // The splash is nothing but quotes, so for college staff it is skipped
+  // outright rather than rendered as an empty screen for six seconds.
+  const [eligible] = useState(shouldShowLoadingQuotes);
+  const splash =
+    eligible && !splashDone ? <QuoteSplash onDone={() => setSplashDone(true)} /> : null;
+  return { splashDone: !eligible || splashDone, splash };
 }
 
 // Full-page error state. Shows the real reason (network refused vs timeout) so

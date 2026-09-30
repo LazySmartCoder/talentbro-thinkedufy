@@ -24,7 +24,16 @@ import {
 } from "@/lib/api";
 import { Shell } from "@/components/dash/Shell";
 import { GateLoading } from "@/components/load-state";
-import { Bar as MiniBar, Kpi, Panel, Pill, chartColors } from "@/components/dash/bits";
+import {
+  Bar as MiniBar,
+  Kpi,
+  Panel,
+  Pill,
+  chartAxisProps,
+  chartColors,
+  chartCursor,
+  chartTooltipProps,
+} from "@/components/dash/bits";
 
 export const Route = createFileRoute("/dashboard")({
   head: () => ({
@@ -32,14 +41,6 @@ export const Route = createFileRoute("/dashboard")({
   }),
   component: Overview,
 });
-
-const tooltipStyle = {
-  borderRadius: 8,
-  border: "1px solid oklch(0.9 0 0)",
-  background: "oklch(1 0 0)",
-  fontSize: 12,
-  fontFamily: "inherit",
-} as const;
 
 const TIER_META: Record<DriveCompanyTier, { label: string; tone: "solid" | "outline" | "muted" }> =
   {
@@ -161,7 +162,7 @@ function Overview() {
         <Kpi
           label="Total Students"
           value={k.total_students}
-          hint={`${k.eligible_students} eligible (readiness 40+) · ${k.verified} verified`}
+          hint={`${k.eligible_students} eligible (readiness 40+)`}
           icon={GraduationCap}
         />
         <Kpi
@@ -200,9 +201,9 @@ function Overview() {
                 </linearGradient>
               </defs>
               <CartesianGrid stroke={chartColors.grid} vertical={false} />
-              <XAxis dataKey="month" tickLine={false} axisLine={false} fontSize={11} />
-              <YAxis tickLine={false} axisLine={false} fontSize={11} />
-              <Tooltip contentStyle={tooltipStyle} cursor={{ stroke: chartColors.light }} />
+              <XAxis dataKey="month" {...chartAxisProps} />
+              <YAxis {...chartAxisProps} />
+              <Tooltip {...chartTooltipProps} cursor={{ stroke: chartColors.light }} />
               <Area
                 type="monotone"
                 dataKey="students"
@@ -230,15 +231,20 @@ function Overview() {
                 tickLine={false}
                 axisLine={false}
                 fontSize={11}
-                tick={{ fill: "oklch(0.4 0 0)" }}
+                tick={{ fill: chartColors.axis }}
               />
               <Tooltip
-                contentStyle={tooltipStyle}
-                cursor={{ fill: "oklch(0 0 0 / 0.04)" }}
+                {...chartTooltipProps}
+                cursor={chartCursor}
                 formatter={(value) => [`${value}%`, "of students"]}
               />
               <ChartBar dataKey="pct" radius={[0, 4, 4, 0]} fill={chartColors.ink} barSize={20}>
-                <LabelList dataKey="label" position="right" fontSize={11} fill="oklch(0.35 0 0)" />
+                <LabelList
+                  dataKey="label"
+                  position="right"
+                  fontSize={11}
+                  fill={chartColors.label}
+                />
               </ChartBar>
             </BarChart>
           </ResponsiveContainer>
@@ -254,9 +260,9 @@ function Overview() {
           <ResponsiveContainer width="100%" height={260}>
             <BarChart data={depts} margin={{ left: -18, right: 6, top: 6 }}>
               <CartesianGrid stroke={chartColors.grid} vertical={false} />
-              <XAxis dataKey="short" tickLine={false} axisLine={false} fontSize={11} />
-              <YAxis tickLine={false} axisLine={false} fontSize={11} />
-              <Tooltip contentStyle={tooltipStyle} cursor={{ fill: "oklch(0 0 0 / 0.04)" }} />
+              <XAxis dataKey="short" {...chartAxisProps} />
+              <YAxis {...chartAxisProps} />
+              <Tooltip {...chartTooltipProps} cursor={chartCursor} />
               <ChartBar dataKey="rate" name="Placement %" radius={[4, 4, 0, 0]}>
                 {depts.map((d, i) => (
                   <Cell key={d.department} fill={i % 2 ? chartColors.mid : chartColors.ink} />
@@ -302,31 +308,6 @@ function Overview() {
                   </div>
                 </div>
               ))}
-            </div>
-          </Panel>
-          <Panel title="ID Verification" description="Profiles verified by the placement cell">
-            <div className="space-y-3">
-              <div>
-                <div className="flex justify-between text-xs">
-                  <span>Verified</span>
-                  <span className="font-mono text-muted-foreground">{k.verified}</span>
-                </div>
-                <div className="mt-1.5">
-                  <MiniBar value={k.verified} max={Math.max(1, k.total_students)} />
-                </div>
-              </div>
-              <div>
-                <div className="flex justify-between text-xs">
-                  <span>Pending</span>
-                  <span className="font-mono text-muted-foreground">{k.unverified}</span>
-                </div>
-                <div className="mt-1.5">
-                  <MiniBar value={k.unverified} max={Math.max(1, k.total_students)} />
-                </div>
-              </div>
-              <p className="pt-1 font-mono text-[10px] text-muted-foreground">
-                {k.eligible_students} students clear the readiness bar today
-              </p>
             </div>
           </Panel>
         </div>

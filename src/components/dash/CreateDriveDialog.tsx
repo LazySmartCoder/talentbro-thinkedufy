@@ -95,8 +95,12 @@ function toDateInput(iso: string | null): string {
  * Prefill the form from a drive already on record.
  *
  * `status` is the card's display label ("Live" / "Upcoming" / ...) rather than
- * the stored key, so it is mapped back. `mode` is the work mode, while
- * `drive_mode` is the separate campus/virtual/off-campus choice.
+ * the stored key, so it is mapped back. `stored_status` carries the key itself
+ * and is preferred where the server sent it: the label is derived (a visit
+ * happening today reads Live while the row still says upcoming), so prefilling
+ * from it would silently overwrite the field on an unrelated save.
+ * `mode` is the work mode, while `drive_mode` is the separate
+ * campus/virtual/off-campus choice.
  */
 function draftFromDrive(d: PlacementDrive): Draft {
   const statusBack: Record<string, Draft["status"]> = {
@@ -105,13 +109,14 @@ function draftFromDrive(d: PlacementDrive): Draft {
     Completed: "completed",
     Cancelled: "cancelled",
   };
+  const stored = d.stored_status as Draft["status"] | undefined;
   return {
     company: String(d.company_id),
     title: d.title,
     role: d.role,
     total_vacancies: d.total_vacancies != null ? String(d.total_vacancies) : "",
     drive_mode: (d.drive_mode as Draft["drive_mode"]) ?? "campus",
-    status: statusBack[d.status] ?? "upcoming",
+    status: stored ?? statusBack[d.status] ?? "upcoming",
     visit_date: toDateInput(d.campus_visit_date),
     application_deadline: toDateInput(d.application_deadline),
     work_mode: (d.mode as Draft["work_mode"]) ?? "onsite",

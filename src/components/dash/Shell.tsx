@@ -196,8 +196,13 @@ export function Shell({
                 <p className="truncate text-sm font-medium text-sidebar-primary">
                   {user.name || user.email}
                 </p>
+                {/* The designation rather than the college: everyone signed in here
+                    works at the same institution and already knows which one, while
+                    the title is the thing that differs between the officers on the
+                    roster. Staff with no designation on record still get a label. */}
                 <p className="truncate text-xs text-sidebar-foreground/60">
-                  {user.institution ? `TPO · ${user.institution}` : user.email}
+                  {user.designation ||
+                    (user.institution ? `TPO · ${user.institution}` : user.email)}
                 </p>
               </div>
             </Link>

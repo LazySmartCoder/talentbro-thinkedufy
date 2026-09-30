@@ -27,14 +27,16 @@ import {
 import { cn } from "@/lib/utils";
 import { Shell } from "@/components/dash/Shell";
 import { CreateDriveDialog } from "@/components/dash/CreateDriveDialog";
+import { CompanyMark } from "@/components/dash/CompanyMark";
 import {
   Bar,
   Kpi,
   Panel,
   Pill,
+  chartAxisProps,
   chartColors,
   chartCursor,
-  chartTooltip,
+  chartTooltipProps,
 } from "@/components/dash/bits";
 import {
   getCompanies,
@@ -80,14 +82,6 @@ function fmtDate(iso: string | null): string {
     month: "short",
     year: "numeric",
   });
-}
-
-const MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
-
-function visitParts(iso: string): { month: string; day: string } {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return { month: "—", day: "—" };
-  return { month: MONTHS[d.getMonth()] ?? "—", day: String(d.getDate()) };
 }
 
 function DriveDetailModal({
@@ -144,12 +138,15 @@ function DriveDetailModal({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-4 border-b border-border px-6 py-5">
-          <div className="min-w-0">
-            <h2 className="truncate text-lg font-bold">{drive.title || drive.company_name}</h2>
-            <p className="mt-0.5 font-mono text-xs text-muted-foreground">
-              {drive.company_name}
-              {drive.role ? ` · ${drive.role}` : ""}
-            </p>
+          <div className="flex min-w-0 items-center gap-3">
+            <CompanyMark company={drive} className="size-11 rounded-md" />
+            <div className="min-w-0">
+              <h2 className="truncate text-lg font-bold">{drive.title || drive.company_name}</h2>
+              <p className="mt-0.5 font-mono text-xs text-muted-foreground">
+                {drive.company_name}
+                {drive.role ? ` · ${drive.role}` : ""}
+              </p>
+            </div>
             <div className="mt-2.5 flex flex-wrap gap-1.5">
               <Pill tone={drive.status === "Live" ? "solid" : "outline"}>{drive.status}</Pill>
               <Pill tone={TIER_META[drive.tier]?.tone ?? "muted"}>
@@ -355,10 +352,6 @@ function DrivesPage() {
       openings: all.filter((d) => d.tier === tier).reduce((a, d) => a + (d.openings ?? 0), 0),
     }))
     .filter((row) => row.drives > 0);
-  const upcomingVisits = all
-    .filter((d) => d.campus_visit_date)
-    .sort((a, b) => (a.campus_visit_date ?? "").localeCompare(b.campus_visit_date ?? ""))
-    .slice(0, 4);
 
   return (
     <Shell
@@ -393,9 +386,9 @@ function DrivesPage() {
           <ResponsiveContainer width="100%" height={240}>
             <BarChart data={tierMix} margin={{ left: -22, right: 6, top: 6 }}>
               <CartesianGrid stroke={chartColors.grid} vertical={false} />
-              <XAxis dataKey="label" tickLine={false} axisLine={false} fontSize={11} />
-              <YAxis tickLine={false} axisLine={false} fontSize={11} allowDecimals={false} />
-              <Tooltip contentStyle={chartTooltip} cursor={chartCursor} />
+              <XAxis dataKey="label" {...chartAxisProps} />
+              <YAxis {...chartAxisProps} allowDecimals={false} />
+              <Tooltip {...chartTooltipProps} cursor={chartCursor} />
               <ChartBar
                 dataKey="drives"
                 name="Drives"
@@ -446,24 +439,25 @@ function DrivesPage() {
         </div>
       </Panel>
 
-      <div className="mt-4 grid items-start gap-4 xl:grid-cols-3">
-        <div className="grid gap-3 sm:grid-cols-2 xl:col-span-2">
-          {shown.map((d) => {
-            const isActive = active?.drive_id === d.drive_id;
-            return (
-              <button
-                key={d.drive_id}
-                onClick={() => {
-                  setActiveId(d.drive_id);
-                  setOpenId(d.drive_id);
-                }}
-                aria-haspopup="dialog"
-                className={cn(
-                  "dash-panel flex h-full flex-col p-4 text-left transition-all hover:shadow-md",
-                  isActive && "ring-2 ring-ring",
-                )}
-              >
-                <div className="flex flex-wrap items-start justify-between gap-2">
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        {shown.map((d) => {
+          const isActive = active?.drive_id === d.drive_id;
+          return (
+            <button
+              key={d.drive_id}
+              onClick={() => {
+                setActiveId(d.drive_id);
+                setOpenId(d.drive_id);
+              }}
+              aria-haspopup="dialog"
+              className={cn(
+                "dash-panel flex h-full cursor-pointer flex-col p-4 text-left transition-all hover:shadow-md",
+                isActive && "ring-2 ring-ring",
+              )}
+            >
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="flex min-w-0 items-center gap-2.5">
+                  <CompanyMark company={d} className="size-9 rounded-md" />
                   <div className="min-w-0">
                     <p className="truncate text-sm font-semibold">
                       {d.company_name}
@@ -478,187 +472,125 @@ function DrivesPage() {
                       {d.location ? ` · ${d.location}` : ""}
                     </p>
                   </div>
-                  <div className="flex shrink-0 gap-1.5">
-                    <Pill tone={d.status === "Live" ? "solid" : "outline"}>{d.status}</Pill>
-                    <Pill tone={TIER_META[d.tier]?.tone ?? "muted"}>
-                      {TIER_META[d.tier]?.label ?? d.tier}
-                    </Pill>
-                  </div>
                 </div>
+                <div className="flex shrink-0 gap-1.5">
+                  <Pill tone={d.status === "Live" ? "solid" : "outline"}>{d.status}</Pill>
+                  <Pill tone={TIER_META[d.tier]?.tone ?? "muted"}>
+                    {TIER_META[d.tier]?.label ?? d.tier}
+                  </Pill>
+                </div>
+              </div>
 
-                {/* Only the two figures that are genuinely comparative get a bar:
+              {/* Only the two figures that are genuinely comparative get a bar:
                     opening count and eligible pool are both measured across the
                     drives on record, so their bars say something. Rounds and
                     backlogs are absolute counts with no meaningful ceiling, so
                     they stay as plain numbers. */}
-                <div className="mt-4 grid grid-cols-2 gap-3">
-                  {[
-                    {
-                      icon: Briefcase,
-                      label: "Openings",
-                      value: d.openings ?? 0,
-                      max: bestOpenings,
-                    },
-                    {
-                      icon: Users,
-                      label: "Eligible pool",
-                      value: d.eligible_count,
-                      max: bestPool,
-                    },
-                    {
-                      icon: CalendarClock,
-                      label: "Selection rounds",
-                      value: d.selection_rounds.length,
-                    },
-                    {
-                      icon: GraduationCap,
-                      label: "Backlogs allowed",
-                      value: d.maximum_backlogs ?? 0,
-                    },
-                  ].map(({ icon: Icon, label, value, max }) => (
-                    <div key={label} className="rounded-md border border-border/60 px-3 py-2.5">
-                      <div className="flex items-center gap-1.5">
-                        <Icon className="size-3.5 text-muted-foreground" />
-                        <p className="mono-label">{label}</p>
-                      </div>
-                      <p className="stat-num mt-1.5 text-lg">{value}</p>
-                      {max != null && (
-                        <div className="mt-1.5">
-                          <Bar value={value} max={max || 1} />
-                        </div>
-                      )}
+              <div className="mt-4 grid grid-cols-2 gap-3">
+                {[
+                  {
+                    icon: Briefcase,
+                    label: "Openings",
+                    value: d.openings ?? 0,
+                    max: bestOpenings,
+                  },
+                  {
+                    icon: Users,
+                    label: "Eligible pool",
+                    value: d.eligible_count,
+                    max: bestPool,
+                  },
+                  {
+                    icon: CalendarClock,
+                    label: "Selection rounds",
+                    value: d.selection_rounds.length,
+                  },
+                  {
+                    icon: GraduationCap,
+                    label: "Backlogs allowed",
+                    value: d.maximum_backlogs ?? 0,
+                  },
+                ].map(({ icon: Icon, label, value, max }) => (
+                  <div key={label} className="rounded-md border border-border/60 px-3 py-2.5">
+                    <div className="flex items-center gap-1.5">
+                      <Icon className="size-3.5 text-muted-foreground" />
+                      <p className="mono-label">{label}</p>
                     </div>
-                  ))}
-                </div>
-
-                <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
-                  {d.ctc_min != null || d.ctc_max != null ? (
-                    <span className="inline-flex items-center gap-1.5">
-                      <IndianRupee className="size-3.5" />
-                      {d.ctc_min ?? "—"}–{d.ctc_max ?? "—"} LPA
-                    </span>
-                  ) : null}
-                  {d.minimum_cgpa !== null && (
-                    <span className="inline-flex items-center gap-1.5">
-                      <GraduationCap className="size-3.5" /> CGPA ≥ {d.minimum_cgpa}
-                    </span>
-                  )}
-                  {d.application_deadline && (
-                    <span className="inline-flex items-center gap-1.5">
-                      <CalendarClock className="size-3.5" /> Apply by{" "}
-                      {fmtDate(d.application_deadline)}
-                    </span>
-                  )}
-                  {d.location && (
-                    <span className="inline-flex items-center gap-1.5">
-                      <MapPin className="size-3.5" /> {d.location}
-                    </span>
-                  )}
-                  {d.offer_status && (
-                    <span className="inline-flex items-center gap-1.5">
-                      <BadgeCheck className="size-3.5" />
-                      <span className="capitalize">{d.offer_status.replace(/_/g, " ")}</span>
-                    </span>
-                  )}
-                </div>
-
-                <div className="mt-3 flex flex-wrap gap-1.5 border-t border-border/60 pt-3">
-                  {d.eligible_branches.length > 0 ? (
-                    d.eligible_branches.map((b) => <Pill key={b}>{b}</Pill>)
-                  ) : (
-                    <Pill>All branches</Pill>
-                  )}
-                  {d.eligible_courses.map((c) => (
-                    <Pill key={c} tone="outline">
-                      All {c}
-                    </Pill>
-                  ))}
-                </div>
-              </button>
-            );
-          })}
-          {shown.length === 0 && (
-            <Panel className="sm:col-span-2 xl:col-span-2">
-              <p className="py-8 text-center text-sm text-muted-foreground">
-                {all.length === 0
-                  ? "No drives yet — register a company, then create a drive when it goes to hire."
-                  : "No drives match this filter or search."}
-              </p>
-              {all.length === 0 && (
-                <div className="flex flex-wrap justify-center gap-2 pb-6">
-                  <button
-                    onClick={() => setCreating(true)}
-                    className="inline-flex items-center gap-2 rounded-md bg-primary px-3.5 py-2 text-xs font-medium text-primary-foreground hover:opacity-90"
-                  >
-                    <Plus className="size-3.5" /> Schedule Drive
-                  </button>
-                </div>
-              )}
-            </Panel>
-          )}
-        </div>
-
-        <div className="space-y-4">
-          <Panel
-            title="Selection Rounds"
-            description={active ? active.company_name : "Select a drive"}
-            bodyClassName="p-0"
-          >
-            {active && active.selection_rounds.length > 0 ? (
-              <ul className="divide-y divide-border">
-                {active.selection_rounds.map((r, i) => (
-                  <li key={`${r}-${i}`} className="flex items-center gap-3 px-5 py-3">
-                    <span className="grid size-7 shrink-0 place-items-center rounded-full bg-muted font-mono text-[11px] font-bold">
-                      {i + 1}
-                    </span>
-                    <span className="text-xs font-medium">{r}</span>
-                  </li>
+                    <p className="stat-num mt-1.5 text-lg">{value}</p>
+                    {max != null && (
+                      <div className="mt-1.5">
+                        <Bar value={value} max={max || 1} />
+                      </div>
+                    )}
+                  </div>
                 ))}
-              </ul>
-            ) : (
-              <p className="px-5 py-8 text-center text-sm text-muted-foreground">
-                {active ? "No rounds recorded." : "No drive selected."}
-              </p>
-            )}
-          </Panel>
+              </div>
 
-          <Panel
-            title="Next Campus Visits"
-            description="Scheduled visits from the drives on record"
-            bodyClassName="p-0"
-          >
-            {upcomingVisits.length > 0 ? (
-              <ul className="divide-y divide-border">
-                {upcomingVisits.map((d) => {
-                  const { month, day } = visitParts(d.campus_visit_date as string);
-                  return (
-                    <li
-                      key={`${d.drive_id}-${d.campus_visit_date}`}
-                      className="flex gap-3 px-5 py-3.5"
-                    >
-                      <div className="grid w-16 shrink-0 place-items-center rounded-md border border-border px-1 py-1 text-center">
-                        <span className="font-mono text-[9px] uppercase text-muted-foreground">
-                          {month}
-                        </span>
-                        <span className="stat-num text-sm">{day}</span>
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium">{d.company_name}</p>
-                        <p className="truncate font-mono text-[11px] text-muted-foreground">
-                          {d.mode} · {d.location ?? "Location TBD"}
-                        </p>
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            ) : (
-              <p className="px-5 py-10 text-center text-sm text-muted-foreground">
-                No campus visits scheduled yet.
-              </p>
+              <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+                {d.ctc_min != null || d.ctc_max != null ? (
+                  <span className="inline-flex items-center gap-1.5">
+                    <IndianRupee className="size-3.5" />
+                    {d.ctc_min ?? "—"}–{d.ctc_max ?? "—"} LPA
+                  </span>
+                ) : null}
+                {d.minimum_cgpa !== null && (
+                  <span className="inline-flex items-center gap-1.5">
+                    <GraduationCap className="size-3.5" /> CGPA ≥ {d.minimum_cgpa}
+                  </span>
+                )}
+                {d.application_deadline && (
+                  <span className="inline-flex items-center gap-1.5">
+                    <CalendarClock className="size-3.5" /> Apply by{" "}
+                    {fmtDate(d.application_deadline)}
+                  </span>
+                )}
+                {d.location && (
+                  <span className="inline-flex items-center gap-1.5">
+                    <MapPin className="size-3.5" /> {d.location}
+                  </span>
+                )}
+                {d.offer_status && (
+                  <span className="inline-flex items-center gap-1.5">
+                    <BadgeCheck className="size-3.5" />
+                    <span className="capitalize">{d.offer_status.replace(/_/g, " ")}</span>
+                  </span>
+                )}
+              </div>
+
+              <div className="mt-3 flex flex-wrap gap-1.5 border-t border-border/60 pt-3">
+                {d.eligible_branches.length > 0 ? (
+                  d.eligible_branches.map((b) => <Pill key={b}>{b}</Pill>)
+                ) : (
+                  <Pill>All branches</Pill>
+                )}
+                {d.eligible_courses.map((c) => (
+                  <Pill key={c} tone="outline">
+                    All {c}
+                  </Pill>
+                ))}
+              </div>
+            </button>
+          );
+        })}
+        {shown.length === 0 && (
+          <Panel className="sm:col-span-2 xl:col-span-2">
+            <p className="py-8 text-center text-sm text-muted-foreground">
+              {all.length === 0
+                ? "No drives yet — register a company, then create a drive when it goes to hire."
+                : "No drives match this filter or search."}
+            </p>
+            {all.length === 0 && (
+              <div className="flex flex-wrap justify-center gap-2 pb-6">
+                <button
+                  onClick={() => setCreating(true)}
+                  className="inline-flex items-center gap-2 rounded-md bg-primary px-3.5 py-2 text-xs font-medium text-primary-foreground hover:opacity-90"
+                >
+                  <Plus className="size-3.5" /> Schedule Drive
+                </button>
+              </div>
             )}
           </Panel>
-        </div>
+        )}
       </div>
 
       {openDrive && !editingDrive && (

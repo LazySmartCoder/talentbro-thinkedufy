@@ -174,6 +174,29 @@
   --sidebar-accent-foreground: oklch(0.14 0 0);
   --sidebar-border: oklch(0.9 0 0);
   --sidebar-ring: oklch(0.6 0 0);
+
+  /* Chart ink.
+     Recharts is handed these as plain SVG fill/stroke values, and `var()`
+     resolves in an SVG presentation attribute, so a chart re-inks itself the
+     moment the theme class flips — no prop has to know the theme exists.
+     The four ramp steps are ordered dark→light and each stays a clear step
+     away from its neighbour, because a categorical series is only readable
+     while its members are distinguishable. */
+  --chart-ink: oklch(0.14 0 0);
+  --chart-mid: oklch(0.5 0 0);
+  --chart-light: oklch(0.72 0 0);
+  --chart-faint: oklch(0.86 0 0);
+  --chart-grid: oklch(0.9 0 0);
+  /* Text drawn inside a chart: axis ticks, bar value labels. */
+  --chart-axis: oklch(0.45 0 0);
+  --chart-label: oklch(0.35 0 0);
+  /* Hover readout. The foreground colour is part of the surface, not of the
+     tooltip component: recharts inherits it, so without this the light theme's
+     dark text stays on and vanishes against the dark theme's dark surface. */
+  --chart-surface: oklch(1 0 0);
+  --chart-surface-fg: oklch(0.14 0 0);
+  --chart-surface-border: oklch(0.9 0 0);
+  --chart-cursor: oklch(0 0 0 / 0.04);
 }
 
 .dark {
@@ -211,6 +234,22 @@
   --sidebar-accent-foreground: oklch(0.98 0 0);
   --sidebar-border: oklch(1 0 0 / 12%);
   --sidebar-ring: oklch(0.6 0 0);
+
+  /* Dark chart ink. Inverted ramp: the darkest step of the light theme
+     (oklch 0.14) sits on a oklch 0.09 card and reads as a hole, so the series
+     runs light→dark here instead. The two ends still bracket the surface,
+     which is what keeps two adjacent series from merging. */
+  --chart-ink: oklch(0.96 0 0);
+  --chart-mid: oklch(0.76 0 0);
+  --chart-light: oklch(0.58 0 0);
+  --chart-faint: oklch(0.44 0 0);
+  --chart-grid: oklch(1 0 0 / 0.14);
+  --chart-axis: oklch(0.68 0 0);
+  --chart-label: oklch(0.85 0 0);
+  --chart-surface: oklch(0.2 0 0);
+  --chart-surface-fg: oklch(0.98 0 0);
+  --chart-surface-border: oklch(1 0 0 / 0.16);
+  --chart-cursor: oklch(1 0 0 / 0.08);
 }
 
 @layer base {
